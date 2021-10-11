@@ -36,10 +36,20 @@ def set_random_seed(seed, deterministic=False):
 
 
 def parse_losses(losses):
+    """parse losses.
+
+    Args:
+        losses (dict): losses get from training
+    Returns:
+        loss (float) : loss
+        log_var (dict) : A dict containing logs of variables
+    """
     log_vars = OrderedDict()
     for loss_name, loss_value in losses.items():
+        # loss type == torch.Tensor
         if isinstance(loss_value, torch.Tensor):
             log_vars[loss_name] = loss_value.mean()
+        # loss type == list -> using mean value
         elif isinstance(loss_value, list):
             log_vars[loss_name] = sum(_loss.mean() for _loss in loss_value)
         else:
@@ -73,7 +83,7 @@ def batch_processor(model, data, train_mode):
             models.
 
     Returns:
-        dict: A dict containing losses and log vars.
+        output (dict): A dict containing losses and log vars.
     """
     losses = model(**data)
     loss, log_vars = parse_losses(losses)
@@ -90,6 +100,15 @@ def train_model(model,
                 distributed=False,
                 timestamp=None,
                 meta=None):
+    """Train model.
+    Args:
+        model (nn.Module): A PyTorch model.
+        dataset : The dataset for training.
+        cfg (dict): The config file for training.
+        distributed (bool): distributed set or not.
+        timestamp (bool): Use timestamp or not.
+        meta (bool): use meta or not.
+    """
     logger = get_root_logger(cfg.log_level)
 
     # start training
@@ -168,7 +187,7 @@ def build_optimizer(model, optimizer_cfg):
         optimizer_cls = getattr(optimizers, optimizer_cfg.pop('type'))
         return optimizer_cls(params, **optimizer_cfg)
 
-
+# for distributed model
 def _dist_train(model, dataset, cfg, logger=None, timestamp=None, meta=None):
     # prepare data loaders
     dataset = dataset if isinstance(dataset, (list, tuple)) else [dataset]
@@ -225,7 +244,7 @@ def _dist_train(model, dataset, cfg, logger=None, timestamp=None, meta=None):
         runner.load_checkpoint(cfg.load_from)
     runner.run(data_loaders, cfg.workflow, cfg.total_epochs)
 
-
+#for not distributed model
 def _non_dist_train(model,
                     dataset,
                     cfg,
