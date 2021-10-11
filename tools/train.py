@@ -5,11 +5,21 @@ import os
 import os.path as osp
 import time
 
+'''
+open-mmlab/mmcv
+link: https://github.com/open-mmlab/mmcv
+MMCV is a foundational library for computer vision research and supports many research projects(e.g. MMClassification, MMDetection etc.)
+'''
 import mmcv
 import torch
 from mmcv import Config
 from mmcv.runner import init_dist
 
+'''
+oepn-mmlab/OpenSelfSup
+link: https://github.com/open-mmlab/OpenSelfSup
+OpenSelfSup is an open source unsupervised representation learning toolbox based on PyTorch.
+'''
 from openselfsup import __version__
 from openselfsup.apis import set_random_seed, train_model
 from openselfsup.datasets import build_dataset
@@ -124,8 +134,7 @@ def main():
     datasets = [build_dataset(cfg.data.train)]
     assert len(cfg.workflow) == 1, "Validation is called by hook."
     if cfg.checkpoint_config is not None:
-        # save openselfsup version, config file content and class names in
-        # checkpoints as meta data
+        # save openselfsup version, config file content and class names in checkpoints as meta data
         cfg.checkpoint_config.meta = dict(
             openselfsup_version=__version__, config=cfg.text)
     # add an attribute for visualization convenience
