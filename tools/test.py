@@ -14,7 +14,7 @@ from openselfsup.models import build_model
 from openselfsup.utils import (get_root_logger, dist_forward_collect, 
                                nondist_forward_collect, traverse_replace)
 
-
+# set for single gup test
 def single_gpu_test(model, data_loader):
     model.eval()
     func = lambda **x: model(mode='test', **x)
@@ -22,7 +22,7 @@ def single_gpu_test(model, data_loader):
                                       len(data_loader.dataset))
     return results
 
-
+# set for multiple gpu test
 def multi_gpu_test(model, data_loader):
     model.eval()
     func = lambda **x: model(mode='test', **x)
@@ -59,7 +59,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-
+    # read cfg using mmcv
     cfg = mmcv.Config.fromfile(args.config)
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
