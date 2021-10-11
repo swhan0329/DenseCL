@@ -2,10 +2,10 @@
 
 This project is a code review from the class above.
 
-1. Paper presenter:
+1. Paper presenter: Sunghwan Hong
 2. Code Reivewer: Sunwoo Kim, Seowoo Han
 
-We are all from Computer Vision Lab(Prof. Seungryong Kim).
+We are all from **CVLAB**(Prof. Seungryong Kim).
 
 ## Dense Contrastive Learning for Self-Supervised Visual Pre-Training
 
