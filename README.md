@@ -1,4 +1,13 @@
-# Dense Contrastive Learning for Self-Supervised Visual Pre-Training
+# AAA738 Computer Vision Applications - Seungryong Kim, Korea University
+
+This project is a code review from the class above.
+
+1. Paper presenter:
+2. Code Reivewer: Sunwoo Kim, Seowoo Han
+
+We are all from Computer Vision Lab(Prof. Seungryong Kim).
+
+## Dense Contrastive Learning for Self-Supervised Visual Pre-Training
 
 This project hosts the code for implementing the DenseCL algorithm for self-supervised representation learning.
 
