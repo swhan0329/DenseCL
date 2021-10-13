@@ -39,20 +39,50 @@ class MOCO(nn.Module):
                  momentum=0.999,
                  **kwargs):
         super(MOCO, self).__init__()
+        
+        """
+        model = dict(
+        type='MOCO',
+        pretrained=None,
+        queue_len=65536,
+        feat_dim=128,
+        momentum=0.999,
+        backbone=dict(
+            type='ResNet',
+            depth=50,
+            in_channels=3,
+            out_indices=[4],  # 0: conv-1, x: stage-x
+            norm_cfg=dict(type='BN')),
+        neck=dict(
+            type='LinearNeck',
+            in_channels=2048,
+            out_channels=128,
+            with_avg_pool=True),
+        head=dict(type='ContrastiveHead', temperature=0.07))
+        """
+        # build함수에 따라, backbone, neck의 initializae된 클래스가 반환되며, sequential로 묶인다.
         self.encoder_q = nn.Sequential(
             builder.build_backbone(backbone), builder.build_neck(neck))
         self.encoder_k = nn.Sequential(
             builder.build_backbone(backbone), builder.build_neck(neck))
+        
         self.backbone = self.encoder_q[0]
+        # key encoder는 momentum으로 update되기 때문에 requires_grad=False로 만들어 학습이 되지않게 한다.
         for param in self.encoder_k.parameters():
             param.requires_grad = False
+        
+        # contrastive loss head.
+        # models/heads/contrastive_head.py
         self.head = builder.build_head(head)
+        
+        # weight initialization
         self.init_weights(pretrained=pretrained)
 
         self.queue_len = queue_len
         self.momentum = momentum
 
         # create the queue
+        # register_buffer: 모델의 구성 ex)layer로써 존재하지만 update되지 않음.
         self.register_buffer("queue", torch.randn(feat_dim, queue_len))
         self.queue = nn.functional.normalize(self.queue, dim=0)
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
@@ -68,6 +98,8 @@ class MOCO(nn.Module):
             print_log('load model from: {}'.format(pretrained), logger='root')
         self.encoder_q[0].init_weights(pretrained=pretrained)
         self.encoder_q[1].init_weights(init_linear='kaiming')
+        
+        # queue의 paramter를 그대로 key의 parameter에 복사한다.
         for param_q, param_k in zip(self.encoder_q.parameters(),
                                     self.encoder_k.parameters()):
             param_k.data.copy_(param_q.data)
@@ -105,22 +137,29 @@ class MOCO(nn.Module):
         """
         # gather from all gpus
         batch_size_this = x.shape[0]
+        
+        # 모든 프로세스들에서 텐서를 모음.
         x_gather = concat_all_gather(x)
         batch_size_all = x_gather.shape[0]
 
         num_gpus = batch_size_all // batch_size_this
 
         # random shuffle index
+        # 총 배치수를 max index로 설정하여 random permutation하여 index를 섞음
         idx_shuffle = torch.randperm(batch_size_all).cuda()
 
         # broadcast to all gpus
+        # 섞은 index를 다시 분산된 환경에 복사시킴.
         torch.distributed.broadcast(idx_shuffle, src=0)
 
         # index for restoring
+        # index를 unshuffle하기위한 인덱스를 저장해둠.
         idx_unshuffle = torch.argsort(idx_shuffle)
 
         # shuffled index for this gpu
         gpu_idx = torch.distributed.get_rank()
+        
+        # 분산된 환경에 permutation된 key index를 해당 gpu에 배당된 개수만큼 분배.
         idx_this = idx_shuffle.view(num_gpus, -1)[gpu_idx]
 
         return x_gather[idx_this], idx_unshuffle
@@ -150,6 +189,7 @@ class MOCO(nn.Module):
         Args:
             img (Tensor): Input of two concatenated images of shape (N, 2, C, H, W).
                 Typically these should be mean centered and std scaled.
+            여기서 N은 배치, 2는 augmented query, key의 개수를 표시한다.
 
         Returns:
             dict[str, Tensor]: A dictionary of loss components.
@@ -158,6 +198,7 @@ class MOCO(nn.Module):
             "Input must have 5 dims, got: {}".format(img.dim())
         im_q = img[:, 0, ...].contiguous()
         im_k = img[:, 1, ...].contiguous()
+        
         # compute query features
         q = self.encoder_q(im_q)[0]  # queries: NxC
         q = nn.functional.normalize(q, dim=1)
@@ -177,12 +218,34 @@ class MOCO(nn.Module):
 
         # compute logits
         # Einstein sum is more intuitive
-        # positive logits: Nx1
+        # positive logits: Nx1 (c=128), inner product. get similarity.
         l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
-        # negative logits: NxK
+        
+        # negative logits: NxK, inner product. all corresponding between 'n' set in the batch and 'k' set in the dictionary.
+        # negative는 queue에서 복재해서 similarity를 구한다.
         l_neg = torch.einsum('nc,ck->nk', [q, self.queue.clone().detach()])
-
+        
+        # Contrastive loss 계산
+        """
+            def forward(self, pos, neg):
+            '''Forward head.
+            Args:
+                pos (Tensor): Nx1 positive similarity.
+                neg (Tensor): Nxk negative similarity.
+            Returns:
+                dict[str, Tensor]: A dictionary of loss components.
+            '''
+            N = pos.size(0)
+            logits = torch.cat((pos, neg), dim=1)
+            logits /= self.temperature
+            labels = torch.zeros((N, ), dtype=torch.long).cuda()
+            losses = dict()
+            losses['loss'] = self.criterion(logits, labels)
+            return losses
+        """
         losses = self.head(l_pos, l_neg)
+        
+        # 이번 step에서 뽑혔던 key를 enqueue하고, 제일 오래되었던 key를 dequeue해서 제거한다.
         self._dequeue_and_enqueue(k)
 
         return losses
@@ -208,11 +271,14 @@ def concat_all_gather(tensor):
 
     *** Warning ***: torch.distributed.all_gather has no gradient.
     """
+    # 각 분산된 환경에 있는 key tensor의 shape과 같은 one tensor를 모아두는 리스트 생성.
     tensors_gather = [
         torch.ones_like(tensor)
         for _ in range(torch.distributed.get_world_size())
     ]
+    # 모든 parallel process에 존재하는 key의 텐서를 가져와서 복제 
     torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
-
+    
+    # key tensor들을 concat 
     output = torch.cat(tensors_gather, dim=0)
     return output
