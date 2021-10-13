@@ -188,7 +188,65 @@ class DenseCL(nn.Module):
         im_k = img[:, 1, ...].contiguous()
         
         # compute query features
-        q_b = self.encoder_q[0](im_q) # backbone features
+        """
+        self.encoder[1]
+            neck=dict(
+            type='DenseCLNeck',
+            in_channels=2048,
+            hid_channels=2048,
+            out_channels=128,
+            num_grid=None)
+        """
+        
+        """
+        # DenseCL/openselfsup/models/necks.py 
+        class DenseCLNeck(nn.Module):
+            '''The non-linear neck in DenseCL.
+                Single and dense in parallel: fc-relu-fc, conv-relu-conv
+            '''
+            def __init__(self,
+                         in_channels,
+                         hid_channels,
+                         out_channels,
+                         num_grid=None):
+                super(DenseCLNeck, self).__init__()
+
+                self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+                self.mlp = nn.Sequential(
+                    nn.Linear(in_channels, hid_channels), nn.ReLU(inplace=True),
+                    nn.Linear(hid_channels, out_channels))
+
+                self.with_pool = num_grid != None
+                if self.with_pool:
+                    self.pool = nn.AdaptiveAvgPool2d((num_grid, num_grid))
+                self.mlp2 = nn.Sequential(
+                    nn.Conv2d(in_channels, hid_channels, 1), nn.ReLU(inplace=True),
+                    nn.Conv2d(hid_channels, out_channels, 1))
+                self.avgpool2 = nn.AdaptiveAvgPool2d((1, 1))
+
+            def init_weights(self, init_linear='normal'):
+                _init_weights(self, init_linear)
+
+            def forward(self, x):
+                assert len(x) == 1
+                x = x[0]
+
+                avgpooled_x = self.avgpool(x)
+                avgpooled_x = self.mlp(avgpooled_x.view(avgpooled_x.size(0), -1))
+
+                if self.with_pool:
+                    x = self.pool(x) # sxs
+                    
+                x = self.mlp2(x) # sxs: bxdxsxs
+                avgpooled_x2 = self.avgpool2(x) # 1x1: bxdx1x1
+                
+                x = x.view(x.size(0), x.size(1), -1) # bxdxs^2
+                avgpooled_x2 = avgpooled_x2.view(avgpooled_x2.size(0), -1) # bxd
+                return [avgpooled_x, x, avgpooled_x2]
+        """
+        # q_b: 2048x7x7
+        # q: mlp(average_pool(x)), q_grid:conv(x), q2: average_pool(x)
+        q_b = self.encoder_q[0](im_q) # backbone features, backbone으로 부터 뽑는 feature
         q, q_grid, q2 = self.encoder_q[1](q_b)  # queries: NxC:gloabl; NxCxS^2:dense
         q_b = q_b[0]
         q_b = q_b.view(q_b.size(0), q_b.size(1), -1)
@@ -213,10 +271,10 @@ class DenseCL(nn.Module):
             k_b = k_b[0]
             k_b = k_b.view(k_b.size(0), k_b.size(1), -1)
 
-            k = nn.functional.normalize(k, dim=1)
-            k2 = nn.functional.normalize(k2, dim=1)
-            k_grid = nn.functional.normalize(k_grid, dim=1)
-            k_b = nn.functional.normalize(k_b, dim=1)
+            k = nn.functional.normalize(k, dim=1) # gloabl: mlp(avgpool(x))
+            k2 = nn.functional.normalize(k2, dim=1) # gloabl: avgpool(x)
+            k_grid = nn.functional.normalize(k_grid, dim=1) # projected dense
+            k_b = nn.functional.normalize(k_b, dim=1) # backbone dense
 
             # undo shuffle
             k = self._batch_unshuffle_ddp(k, idx_unshuffle)
@@ -228,6 +286,7 @@ class DenseCL(nn.Module):
         """ gloabl part """
         # Einstein sum is more intuitive
         # positive logits: Nx1 (c=128), inner product. get similarity.
+        # gloabl: mlp(avgpool(x))
         l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
         
         # negative logits: NxK, inner product. all corresponding between 'n' set in the batch and 'k' set in the dictionary.
@@ -236,14 +295,17 @@ class DenseCL(nn.Module):
         
         """ dense part """
         # feat point set sim
-        backbone_sim_matrix = torch.matmul(q_b.permute(0, 2, 1), k_b)
-        densecl_sim_ind = backbone_sim_matrix.max(dim=2)[1] # NxS^2
-
+        backbone_sim_matrix = torch.matmul(q_b.permute(0, 2, 1), k_b) # (b,hw,hw=49) backbone dense
+        densecl_sim_ind = backbone_sim_matrix.max(dim=2)[1] # NxS^2 # query를 기준으로 key에 대한 WTA(Winner Take All) index를 얻는다.
+        
+        # positive index를 조회하여, 해당 위치에 있는 value들을 dim=2 축으로 쌓는다.
         indexed_k_grid = torch.gather(k_grid, 2, densecl_sim_ind.unsqueeze(1).expand(-1, k_grid.size(1), -1)) # NxCxS^2
+        
+        # inner product for dense contrastive loss.
         densecl_sim_q = (q_grid * indexed_k_grid).sum(1) # NxS^2
-
         l_pos_dense = densecl_sim_q.view(-1).unsqueeze(-1) # NS^2X1
-
+        
+        # negative logits: NxK, inner product. all corresponding between 'n' set in the batch and 'k' set in the dictionary.
         q_grid = q_grid.permute(0, 2, 1)
         q_grid = q_grid.reshape(-1, q_grid.size(2))
         l_neg_dense = torch.einsum('nc,ck->nk', [q_grid,
@@ -252,7 +314,23 @@ class DenseCL(nn.Module):
         # calculate contrastive loss.
         loss_single = self.head(l_pos, l_neg)['loss_contra']
         loss_dense = self.head(l_pos_dense, l_neg_dense)['loss_contra']
-
+        """
+            def forward(self, pos, neg):
+            '''Forward head.
+            Args:
+                pos (Tensor): Nx1 positive similarity.
+                neg (Tensor): Nxk negative similarity.
+            Returns:
+                dict[str, Tensor]: A dictionary of loss components.
+            '''
+            N = pos.size(0)
+            logits = torch.cat((pos, neg), dim=1)
+            logits /= self.temperature
+            labels = torch.zeros((N, ), dtype=torch.long).cuda()
+            losses = dict()
+            losses['loss_contra'] = self.criterion(logits, labels)
+            return losses
+        """
         losses = dict()
         losses['loss_contra_single'] = loss_single * (1 - self.loss_lambda)
         losses['loss_contra_dense'] = loss_dense * self.loss_lambda
