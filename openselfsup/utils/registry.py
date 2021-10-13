@@ -62,8 +62,12 @@ def build_from_cfg(cfg, registry, default_args=None):
     assert isinstance(cfg, dict) and 'type' in cfg
     assert isinstance(default_args, dict) or default_args is None
     args = cfg.copy()
-    obj_type = args.pop('type')
+    obj_type = args.pop('type') # args는 dictionary형태로 key:type의 value를 뽑는다.
+    
     if mmcv.is_str(obj_type):
+        # obj_type이 string이면, registry의 module_dict[key=obj_type]을 참조하여 특정 모듈(클래스)을 반환한다.
+        # 해당 obj_type이 존재하지 않으면 에러를 발생시킨다.
+        # moco의 config를 가져온 경우 obj_type = "MOCO"
         obj_cls = registry.get(obj_type)
         if obj_cls is None:
             raise KeyError('{} is not in the {} registry'.format(
@@ -73,7 +77,11 @@ def build_from_cfg(cfg, registry, default_args=None):
     else:
         raise TypeError('type must be a str or valid type, but got {}'.format(
             type(obj_type)))
+        
+    # default_args가 존재한다면, default 값으로 설정한다.
     if default_args is not None:
         for name, value in default_args.items():
             args.setdefault(name, value)
+            
+    # args = cfg.copy() 였으므로, moco의 경우, Moco(**args)로, moco class를 init함수를 거쳐 반환하는 부분이다.
     return obj_cls(**args)
