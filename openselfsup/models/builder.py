@@ -12,6 +12,7 @@ from .registry import (BACKBONES, MODELS, NECKS, HEADS, MEMORIES, LOSSES)
 # MEMORIES = Registry('memory')
 # LOSSES = Registry('loss')
 # 각 registry는 각 registry별 이름을 저장하고 있으며, cfg에 따라, 각 이름에 맞는 모듈들이 저장되는 구조를 띰
+# ( Each registry has each name following cfg. Each registry has the name and module dict corresponding to its name)
 
 def build(cfg, registry, default_args=None):
     """Build a module.
@@ -29,9 +30,12 @@ def build(cfg, registry, default_args=None):
     if isinstance(cfg, list):
         # build_from_cf: openselfsup/utils/registry.py 에 존재.
         # configs/selfsup/moco/r50_v1.py 에 config파일 존재. 모델훈련을 위한, optimizer set, dataset path, normalization 정보등이 다 담겨있다.
+        # ( The config file is located in configs/selfsup/moco/r50_v1.py. The totla information for model training such as optimizer setting, dataset paht, normalization exist.
         # cfg = Config.fromfile(args.config) 와 같이 파일로부터 config를 읽어온다.
+        # ( The cfg is loadad from config file.)
         # model, loss, head등 build_* 함수에 따라 거기에 맞는 registry가 파라미터로 들어간다.
-        # build_model의 경우 cfg = config.model ( moco 에 대한 정보를 담고 있음 )
+        # ( The model, loss, head are wrapped with Registry class instance )
+        # build_model의 경우 cfg = config.model ( denseCL 에 대한 정보를 담고 있음 )
         
         modules = [
             build_from_cfg(cfg_, registry, default_args) for cfg_ in cfg
