@@ -66,8 +66,11 @@ def build_from_cfg(cfg, registry, default_args=None):
     
     if mmcv.is_str(obj_type):
         # obj_type이 string이면, registry의 module_dict[key=obj_type]을 참조하여 특정 모듈(클래스)을 반환한다.
+        # ( If the type of "obj_type" is string, the module(class) instance is returned by refering module_dict[key=obj_type]
         # 해당 obj_type이 존재하지 않으면 에러를 발생시킨다.
-        # moco의 config를 가져온 경우 obj_type = "MOCO"
+        # ( If the obj_type does not exist, error occurs)
+        # densecl의 config를 가져온 경우 obj_type = "DENSECL"
+        # (If in the case of deseCL, obj_type = "DENSECL"
         obj_cls = registry.get(obj_type)
         if obj_cls is None:
             raise KeyError('{} is not in the {} registry'.format(
