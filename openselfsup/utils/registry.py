@@ -86,5 +86,6 @@ def build_from_cfg(cfg, registry, default_args=None):
         for name, value in default_args.items():
             args.setdefault(name, value)
             
-    # args = cfg.copy() 였으므로, moco의 경우, Moco(**args)로, moco class를 init함수를 거쳐 반환하는 부분이다.
+    # args = cfg.copy() 였으므로, densecl의 경우, DenseCL(**args)로, DenseCL class를 init함수를 거쳐 반환하는 부분이다.
+    # The initialized DenseCL class instance are returned.
     return obj_cls(**args)
